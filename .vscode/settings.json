@@ -1,0 +1,13 @@
+{
+    "editor.renderControlCharacters": true,
+    "chat.agent.sandbox.allowNetwork": true,
+    "chat.tools.terminal.ignoreDefaultAutoApproveRules": true,
+    "chat.tools.terminal.outputCompaction": true,
+    "chat.tools.terminal.outputDeltas": true,
+    "chat.includeReferencedInstructions": true,
+    "chat.experimental.useSkillAdherencePrompt": true,
+    "chat.useNestedAgentsMdFiles": true,
+    "terminal.integrated.allowInUntrustedWorkspace": true,
+    "terminal.integrated.enableImages": true,
+    "terminal.integrated.suggest.insertTrailingSpace": true
+}
