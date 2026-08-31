@@ -5,8 +5,8 @@ import { supabase } from '@/lib/supabase'
 
 // 🔧 Replace with your real personal payment details
 const PAYMENT_DETAILS = {
-  bKash: { number: '01307808562', type: 'Personal' },
-  Nagad: { number: '01307808562', type: 'Personal' },
+  bKash: { number: '01834299148', type: 'Personal' },
+  Nagad: { number: '01834299148', type: 'Personal' },
   Bank: {
     accountName: 'MD REAZ UDDIN',
     accountNumber: '00960214024363',
