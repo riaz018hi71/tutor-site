@@ -5,6 +5,51 @@ import { supabase } from '@/lib/supabase'
 import { Order } from '@/lib/types'
 import Link from 'next/link' // 👈 হোমপেজে যাওয়ার জন্য লিংক ইমপোর্ট করা হলো
 
+const PDF_BUCKET = 'suggestions-pdf'
+
+/**
+ * 🧠 বুলেটপ্রুফ পাথ পার্সার
+ * order.suggestions.pdf_url এ যা-ই থাকুক না কেন (ফুল পাবলিক URL, সাইনড URL,
+ * এনকোডেড পাথ, বা স্পেস/বাংলা অক্ষরসহ raw পাথ) — এই ফাংশন সবসময়
+ * Supabase Storage-এর জন্য valid, decoded relative path রিটার্ন করবে।
+ */
+function extractStoragePath(rawPath: string | null | undefined, bucketName: string): string | null {
+  if (!rawPath) return null
+  let path = rawPath.trim()
+
+  // 1️⃣ যদি এটা একটা ফুল URL হয় (public বা signed), শুধু বাকেটের পরের অংশটুকু বের করো
+  if (/^https?:\/\//i.test(path)) {
+    try {
+      const url = new URL(path)
+      const marker = `/${bucketName}/`
+      const idx = url.pathname.indexOf(marker)
+      if (idx !== -1) {
+        path = url.pathname.slice(idx + marker.length)
+      } else {
+        // fallback: bucket নাম না মিললেও চেষ্টা করো শেষ সেগমেন্ট নিতে
+        const parts = url.pathname.split(`${bucketName}/`)
+        path = parts.length > 1 ? parts[parts.length - 1] : url.pathname
+      }
+    } catch {
+      // ভ্যালিড URL না হলে raw string হিসেবেই এগিয়ে যাও
+    }
+  }
+
+  // 2️⃣ যদি path টা percent-encoded থাকে (%E0%A6%... ইত্যাদি), decode করো।
+  //    ইতিমধ্যে raw স্পেস/বাংলা অক্ষর থাকলে (encode করা না থাকলে) স্কিপ করে দাও,
+  //    নাহলে "%" চিহ্ন না থাকা string-এ decodeURIComponent ডাকলে সমস্যা নেই,
+  //    কিন্তু malformed "%" থাকলে এটা crash করতে পারে — তাই try/catch দিয়ে গার্ড করা।
+  if (/%[0-9A-Fa-f]{2}/.test(path)) {
+    try {
+      path = decodeURIComponent(path)
+    } catch {
+      // ম্যালফর্মড এনকোডিং হলে original path-ই ব্যবহার করো
+    }
+  }
+
+  return path.trim() || null
+}
+
 export default function AdminDashboardPage() {
   // 🔐 পাসওয়ার্ড ও অথেন্টিকেশন স্টেট সেটআপ
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -18,13 +63,13 @@ export default function AdminDashboardPage() {
   // 🔑 সিকিউর পাসওয়ার্ড প্রম্পট ফাংশন
   useEffect(() => {
     const password = prompt("অনুগ্রহ করে টিউটর (Tutor) অ্যাডমিন পাসওয়ার্ড দিন:")
-    
+
     if (password === "Rubel#952J+r@") {
       setIsAuthenticated(true)
       fetchOrders()
     } else {
       alert("ভুল পাসওয়ার্ড! আপনি এই ড্যাশবোর্ডে প্রবেশ করতে পারবেন না।")
-      window.location.href = "/" 
+      window.location.href = "/"
     }
   }, [])
 
@@ -81,6 +126,34 @@ export default function AdminDashboardPage() {
     else alert(error.message)
   }
 
+  // 📥 PDF ডাউনলোড লিংক জেনারেট করার ফাংশন — এখন JSX-এর বাইরে, নিজস্ব নামসহ
+  const handleDownload = async (order: Order) => {
+    const rawPath = order.suggestions?.pdf_url
+
+    if (!rawPath) {
+      alert('ফাইল নাম খুঁজে পাওয়া যায়নি!')
+      return
+    }
+
+    const cleanedPath = extractStoragePath(rawPath, PDF_BUCKET)
+
+    if (!cleanedPath) {
+      alert('ফাইলের পাথ পার্স করা যায়নি!')
+      return
+    }
+
+    const { data, error } = await supabase.storage
+      .from(PDF_BUCKET)
+      .createSignedUrl(cleanedPath, 60)
+
+    if (data?.signedUrl) {
+      window.open(data.signedUrl, '_blank')
+    } else {
+      console.error('Supabase Storage Error:', error, '| Path used:', cleanedPath, '| Raw value:', rawPath)
+      alert('ফাইল ডাউনলোড লিংক তৈরি করা যায়নি! স্টোরেজে ফাইলটি আছে কি না চেক করুন।')
+    }
+  }
+
   // 🔒 পাসওয়ার্ড ম্যাচ না হওয়া পর্যন্ত মূল স্ক্রিন পুরোপুরি লক বা হিডেন থাকবে
   if (!isAuthenticated) {
     return (
@@ -93,7 +166,7 @@ export default function AdminDashboardPage() {
   return (
     <main className="min-h-screen bg-neutral-950 px-6 py-16 text-neutral-100">
       <div className="mx-auto max-w-6xl">
-        
+
         {/* 📋 ড্যাশবোর্ড হেডার এবং হোমপেজে যাওয়ার বাটন */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-neutral-800 pb-6">
           <div>
@@ -102,7 +175,7 @@ export default function AdminDashboardPage() {
               🔐 এই ড্যাশবোর্ডটি এখন পাসওয়ার্ড দ্বারা সম্পূর্ণ সুরক্ষিত।
             </p>
           </div>
-          
+
           {/* 🏠 হোমপেজে যাওয়ার স্টাইলিশ বাটন */}
           <div className="mt-4 sm:mt-0">
             <Link href="/" className="inline-flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-neutral-800 hover:border-neutral-500 shadow-md">
@@ -178,51 +251,48 @@ export default function AdminDashboardPage() {
                           {order.status}
                         </span>
                       </td>
+
+                      {/* ✅ Action সেল — Approve/Download আর Delete পুরোপুরি আলাদা, স্বাধীন স্লট */}
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          {order.status === 'Pending' ? (
-                            <button onClick={() => handleApprove(order.id)}
-                              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 shadow-md">
-                              Approve
+                        <div className="flex items-center gap-2 flex-nowrap">
+
+                          {/* বাম স্লট: Pending হলে Approve, Success+pdf থাকলে Download, নাহলে ড্যাশ */}
+                          <div className="flex-shrink-0">
+                            {order.status === 'Pending' ? (
+                              <button
+                                type="button"
+                                onClick={() => handleApprove(order.id)}
+                                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 shadow-md"
+                              >
+                                Approve
+                              </button>
+                            ) : order.status === 'Success' && order.suggestions?.pdf_url ? (
+                              <button
+                                type="button"
+                                onClick={() => handleDownload(order)}
+                                className="text-xs font-semibold text-indigo-400 underline cursor-pointer bg-transparent border-none p-0"
+                              >
+                                Download Link
+                              </button>
+                            ) : (
+                              <span className="text-xs text-neutral-600">—</span>
+                            )}
+                          </div>
+
+                          {/* ডান স্লট: Delete — সবসময়, প্রতিটি রো-তে, আলাদাভাবে রেন্ডার হয় */}
+                          <div className="flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDelete(order.id)
+                              }}
+                              className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 shadow-md"
+                            >
+                              Delete
                             </button>
-                          ) : order.status === 'Success' && order.suggestions?.pdf_url ? (
-                            <button 
-  onClick={async () => {
-    if (!order.suggestions?.pdf_url) {
-      alert('ফাইল নাম খুঁজে পাওয়া যায়নি!');
-      return;
-    }
-    
-    // 🔠 ফাইলের নামের স্পেস ও বাংলা অক্ষর নিখুঁতভাবে ফিক্স করার জন্য
-    const cleanedPath = decodeURIComponent(order.suggestions.pdf_url).trim();
-    
-    // 🔐 সুপাবেস স্টোরেজ থেকে সিকিউর ডাউনলোড লিংক তৈরি
-    const { data, error } = await supabase.storage
-      .from('suggestions-pdf')
-      .createSignedUrl(cleanedPath, 60);
-    
-    if (data?.signedUrl) {
-      window.open(data.signedUrl, '_blank');
-    } else {
-      console.error('Supabase Storage Error:', error);
-      alert('ফাইল ডাউনলোড লিংক তৈরি করা যায়নি! স্টোরেজে ফাইলটি আছে কি না চেক করুন।');
-    }
-  }}
-  className="text-xs font-semibold text-indigo-400 underline cursor-pointer bg-transparent border-none p-0"
->
-  Download Link
-</button>
+                          </div>
 
-
-                          ) : (
-                            <span className="text-xs text-neutral-600">—</span>
-                          )}
-
-                          {/* 🗑️ ডিলিট বাটন */}
-                          <button onClick={() => handleDelete(order.id)}
-                            className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 shadow-md">
-                            Delete
-                          </button>
                         </div>
                       </td>
                     </tr>
