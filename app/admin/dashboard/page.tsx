@@ -186,10 +186,28 @@ export default function AdminDashboardPage() {
                               Approve
                             </button>
                           ) : order.status === 'Success' && order.suggestions?.pdf_url ? (
-                            <a href={order.suggestions.pdf_url} target="_blank"
-                              className="text-xs font-semibold text-indigo-400 underline">
-                              Download Link
-                            </a>
+                            <button 
+  onClick={async () => {
+    if (!order.suggestions?.pdf_url) {
+      alert('ফাইল নাম খুঁজে পাওয়া যায়নি!');
+      return;
+    }
+    // 🔐 সুপাবেস স্টোরেজ থেকে সরাসরি সিকিউর ডাউনলোড লিংক তৈরি
+    const { data, error } = await supabase.storage
+      .from('suggestions-pdf')
+      .createSignedUrl(order.suggestions.pdf_url, 60);
+    
+    if (data?.signedUrl) {
+      window.open(data.signedUrl, '_blank');
+    } else {
+      alert('ফাইল ডাউনলোড লিংক তৈরি করা যায়নি! স্টোরেজে ফাইলটি আছে কি না চেক করুন।');
+    }
+  }}
+  className="text-xs font-semibold text-indigo-400 underline cursor-pointer bg-transparent border-none p-0"
+>
+  Download Link
+</button>
+
                           ) : (
                             <span className="text-xs text-neutral-600">—</span>
                           )}
