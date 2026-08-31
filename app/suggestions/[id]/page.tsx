@@ -10,9 +10,10 @@ async function getSuggestion(id: string): Promise<Suggestion | null> {
   return data as Suggestion
 }
 
-export default async function SuggestionDetailPage({ params }: { params: { id: string } }) {
-  const suggestion = await getSuggestion(params.id)
-  if (!suggestion) notFound()
+export default async function SuggestionDetailPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const suggestion = await getSuggestion(params.id);
+  if (!suggestion) notFound();
 
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100">
