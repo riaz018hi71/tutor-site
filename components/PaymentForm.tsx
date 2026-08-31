@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-// 🔧 Replace with your real personal payment details
+const PDF_BUCKET = 'suggestions-pdf'
+
 const PAYMENT_DETAILS = {
   bKash: { number: '01834299148', type: 'Personal' },
   Nagad: { number: '01834299148', type: 'Personal' },
@@ -15,53 +16,300 @@ const PAYMENT_DETAILS = {
   },
 }
 
+// ------------------------------------------------------------------
+// 🧾 টাইপ ডেফিনিশন — কাস্টম টাইপ এক্সটেনশন, কোনো `any` leak ছাড়াই বিল্ড পাস করে
+// ------------------------------------------------------------------
+type OrderStatus = 'Pending' | 'Success' | 'Used' | 'Rejected' | string
+
+interface OrderSuggestion {
+  title?: string | null
+  pdf_url?: string | null
+}
+
+interface OrderRecord {
+  id: string
+  status: OrderStatus
+  has_downloaded?: boolean | null
+  suggestions?: OrderSuggestion | null
+}
+
+type ViewState = 'checking' | 'form' | 'pending' | 'download'
+
+// ------------------------------------------------------------------
+// 🧠 বুলেটপ্রুফ পাথ পার্সার (অ্যাডমিন ও কাস্টমার ডাউনলোড পেজের মতোই)
+// ফুল URL, এনকোডেড পাথ, বা স্পেস/বাংলা অক্ষরসহ raw পাথ — সব ক্ষেত্রেই
+// Supabase Storage-এর জন্য valid bucket-relative path রিটার্ন করে।
+// ------------------------------------------------------------------
+function extractStoragePath(rawPath: string | null | undefined, bucketName: string): string | null {
+  if (!rawPath) return null
+  let path = rawPath.trim()
+
+  // 1️⃣ ফুল URL হলে শুধু বাকেটের পরের অংশটুকু বের করো
+  if (/^https?:\/\//i.test(path)) {
+    try {
+      const url = new URL(path)
+      const marker = `/${bucketName}/`
+      const idx = url.pathname.indexOf(marker)
+      if (idx !== -1) {
+        path = url.pathname.slice(idx + marker.length)
+      } else {
+        const parts = url.pathname.split(`${bucketName}/`)
+        path = parts.length > 1 ? parts[parts.length - 1] : url.pathname
+      }
+    } catch {
+      // ভ্যালিড URL না হলে raw string হিসেবেই এগিয়ে যাও
+    }
+  }
+
+  // 2️⃣ percent-encoded হলে decode করো (raw বাংলা/স্পেস থাকলে স্কিপ করে দাও)
+  if (/%[0-9A-Fa-f]{2}/.test(path)) {
+    try {
+      path = decodeURIComponent(path)
+    } catch {
+      // ম্যালফর্মড এনকোডিং হলে original path-ই ব্যবহার করো
+    }
+  }
+
+  return path.trim() || null
+}
+
 export default function PaymentForm({ suggestionId, price }: { suggestionId: string; price: number }) {
+  const storageKey = `order_suggestion_${suggestionId}`
+
+  // 🔁 লাইফসাইকেল/ভিউ স্টেট
+  const [view, setView] = useState<ViewState>('checking')
+  const [order, setOrder] = useState<OrderRecord | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+
+  // 💳 পেমেন্ট ফর্ম স্টেট
   const [method, setMethod] = useState<'bKash' | 'Nagad' | 'Bank'>('bKash')
   const [form, setForm] = useState({ name: '', email: '', phone: '', senderNumber: '', trxId: '' })
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [submitStatus, setSubmitStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
 
+  // ------------------------------------------------------------------
+  // 1️⃣ মাউন্ট হওয়ার সময় localStorage চেক করে অর্ডারের বর্তমান অবস্থা যাচাই
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    checkExistingOrder()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestionId])
+
+  const readSavedOrderId = (): string | null => {
+    try {
+      return window.localStorage.getItem(storageKey)
+    } catch {
+      // প্রাইভেট মোড/localStorage ব্লকড থাকলে নিরাপদে null রিটার্ন করো
+      return null
+    }
+  }
+
+  const saveOrderId = (id: string) => {
+    try {
+      window.localStorage.setItem(storageKey, id)
+    } catch {
+      // localStorage না থাকলে ফ্লো চলবে, শুধু refresh-এ state হারাবে
+    }
+  }
+
+  const clearSavedOrder = () => {
+    try {
+      window.localStorage.removeItem(storageKey)
+    } catch {
+      // ignore
+    }
+    setOrder(null)
+  }
+
+  const checkExistingOrder = async () => {
+    setView('checking')
+
+    const savedOrderId = readSavedOrderId()
+
+    if (!savedOrderId) {
+      setView('form')
+      return
+    }
+
+    const { data: existingOrder, error } = await supabase
+      .from('orders')
+      .select('*, suggestions(*)')
+      .eq('id', savedOrderId)
+      .single()
+
+    if (error || !existingOrder) {
+      // অর্ডার আর খুঁজে পাওয়া যাচ্ছে না (ডিলিট হয়ে গেছে ইত্যাদি) — ক্লিন স্লেট
+      clearSavedOrder()
+      setView('form')
+      return
+    }
+
+    const typedOrder = existingOrder as unknown as OrderRecord
+    setOrder(typedOrder)
+
+    if (typedOrder.status === 'Pending') {
+      setView('pending')
+    } else if (typedOrder.status === 'Success' && !typedOrder.has_downloaded) {
+      setView('download')
+    } else {
+      // 'Used', 'Rejected', অথবা আগেই ডাউনলোড হয়ে গেছে — ফর্মে ফিরিয়ে দাও
+      clearSavedOrder()
+      setView('form')
+    }
+  }
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await checkExistingOrder()
+    setRefreshing(false)
+  }
+
+  // ------------------------------------------------------------------
+  // 💳 পেমেন্ট ফর্ম সাবমিশন
+  // ------------------------------------------------------------------
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setStatus('loading')
+    setSubmitStatus('loading')
     setErrorMsg('')
 
-    const { error } = await supabase.from('orders').insert({
-      suggestion_id: suggestionId,
-      customer_name: form.name,
-      customer_email: form.email,
-      customer_phone: form.phone,
-      payment_method: method,
-      sender_number: form.senderNumber,
-      trx_id: form.trxId,
-      status: 'Pending',
-    })
+    const { data, error } = await supabase
+      .from('orders')
+      .insert({
+        suggestion_id: suggestionId,
+        customer_name: form.name,
+        customer_email: form.email,
+        customer_phone: form.phone,
+        payment_method: method,
+        sender_number: form.senderNumber,
+        trx_id: form.trxId,
+        status: 'Pending',
+      })
+      .select('*, suggestions(*)')
+      .single()
 
-    if (error) {
-      setStatus('error')
-      setErrorMsg(error.message)
+    if (error || !data) {
+      setSubmitStatus('error')
+      setErrorMsg(error?.message ?? 'দুঃখিত, একটি সমস্যা হয়েছে। আবার চেষ্টা করুন।')
       return
     }
 
-    setStatus('success')
+    const newOrder = data as unknown as OrderRecord
+
+    saveOrderId(newOrder.id)
+    setOrder(newOrder)
     setForm({ name: '', email: '', phone: '', senderNumber: '', trxId: '' })
+    setSubmitStatus('idle')
+    setView('pending')
   }
 
-  if (status === 'success') {
+  // ------------------------------------------------------------------
+  // 📥 সিকিউর ১-টাইম ডাউনলোড
+  // ------------------------------------------------------------------
+  const handleSecureDownload = async () => {
+    if (!order) return
+
+    const rawPath = order.suggestions?.pdf_url
+
+    if (!rawPath) {
+      alert('ফাইল খুঁজে পাওয়া যায়নি! অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।')
+      return
+    }
+
+    const cleanedPath = extractStoragePath(rawPath, PDF_BUCKET)
+
+    if (!cleanedPath) {
+      alert('ফাইলের পাথ পার্স করা যায়নি! অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।')
+      return
+    }
+
+    setDownloading(true)
+
+    const { data, error } = await supabase.storage
+      .from(PDF_BUCKET)
+      .createSignedUrl(cleanedPath, 300)
+
+    if (error || !data) {
+      console.error('Supabase Storage Error:', error, '| Path used:', cleanedPath, '| Raw value:', rawPath)
+      alert('ডাউনলোড লিংক তৈরি করা যায়নি। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।')
+      setDownloading(false)
+      return
+    }
+
+    await supabase
+      .from('orders')
+      .update({ has_downloaded: true, status: 'Used' })
+      .eq('id', order.id)
+
+    window.open(data.signedUrl, '_blank')
+
+    // ✅ ডাউনলোড শেষ — localStorage ক্লিয়ার করে ফর্মে ফিরিয়ে দাও যাতে চাইলে আবার কিনতে পারে
+    clearSavedOrder()
+    setDownloading(false)
+    setView('form')
+  }
+
+  // ------------------------------------------------------------------
+  // 🖼️ রেন্ডার — স্টেট অনুযায়ী সঠিক ভিউ দেখাও
+  // ------------------------------------------------------------------
+
+  // চেকিং অবস্থা (initial mount বা refresh এর সময়)
+  if (view === 'checking') {
+    return (
+      <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-8 text-center">
+        <p className="text-sm text-neutral-400 font-mono">চেক করা হচ্ছে...</p>
+      </div>
+    )
+  }
+
+  // Scenario A: Pending — যাচাই চলছে
+  if (view === 'pending') {
+    return (
+      <div className="rounded-2xl border border-amber-800 bg-amber-950/20 p-8 text-center">
+        <h3 className="text-xl font-bold text-amber-400">⏳ Your payment is being verified</h3>
+        <p className="mt-2 text-sm text-amber-200">
+          আপনার পেমেন্টটি যাচাই করা হচ্ছে। অ্যাডমিন অ্যাপ্রুভ করার পর এখান থেকেই ডাউনলোড করতে পারবেন।
+        </p>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="mt-6 rounded-lg border border-amber-700 bg-amber-500/10 px-5 py-2.5 text-sm font-semibold text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-60"
+        >
+          {refreshing ? 'চেক করা হচ্ছে...' : '🔄 স্ট্যাটাস রিফ্রেশ করুন'}
+        </button>
+      </div>
+    )
+  }
+
+  // Scenario B: Success — সিকিউর ডাউনলোড বাটন
+  if (view === 'download') {
     return (
       <div className="rounded-2xl border border-emerald-800 bg-emerald-950/40 p-8 text-center">
-        <h3 className="text-xl font-bold text-emerald-400">Order submitted!</h3>
+        <h3 className="text-xl font-bold text-emerald-400">✅ Payment Verified!</h3>
         <p className="mt-2 text-sm text-emerald-200">
-          We'll verify your transaction and unlock your download shortly.
+          আপনার পেমেন্ট অ্যাপ্রুভ হয়েছে। নিচের বাটনে ক্লিক করে আপনার ফাইলটি ডাউনলোড করুন।
+        </p>
+        <button
+          type="button"
+          onClick={handleSecureDownload}
+          disabled={downloading}
+          className="mt-6 w-full rounded-lg bg-indigo-600 py-3 text-sm font-semibold text-white shadow-lg transition-all hover:bg-indigo-500 disabled:opacity-50"
+        >
+          {downloading ? 'লিংক তৈরি হচ্ছে...' : '📥 ১-টাইম ডাউনলোড করুন'}
+        </button>
+        <p className="mt-3 text-xs text-neutral-500">
+          লিংকটি ৫ মিনিটের জন্য বৈধ থাকবে এবং একবারই ব্যবহার করা যাবে।
         </p>
       </div>
     )
   }
 
+  // Scenario C: Used / No Order — ডিফল্ট পেমেন্ট ফর্ম
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-8">
       <h2 className="text-xl font-bold text-white">Complete Your Payment</h2>
@@ -114,11 +362,11 @@ export default function PaymentForm({ suggestionId, price }: { suggestionId: str
         <input name="trxId" required placeholder="Transaction ID (TrxID)" value={form.trxId} onChange={handleChange}
           className="col-span-full rounded-lg border border-neutral-700 bg-neutral-950 px-4 py-2.5 text-sm text-white placeholder-neutral-500 outline-none focus:border-indigo-500" />
 
-        {status === 'error' && <p className="col-span-full text-sm text-red-400">{errorMsg}</p>}
+        {submitStatus === 'error' && <p className="col-span-full text-sm text-red-400">{errorMsg}</p>}
 
-        <button type="submit" disabled={status === 'loading'}
+        <button type="submit" disabled={submitStatus === 'loading'}
           className="col-span-full rounded-lg bg-indigo-600 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-60">
-          {status === 'loading' ? 'Submitting...' : 'Submit Order'}
+          {submitStatus === 'loading' ? 'Submitting...' : 'Submit Order'}
         </button>
       </form>
     </div>

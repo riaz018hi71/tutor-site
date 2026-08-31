@@ -7,17 +7,11 @@ import Link from 'next/link' // 👈 হোমপেজে যাওয়ার
 
 const PDF_BUCKET = 'suggestions-pdf'
 
-/**
- * 🧠 বুলেটপ্রুফ পাথ পার্সার
- * order.suggestions.pdf_url এ যা-ই থাকুক না কেন (ফুল পাবলিক URL, সাইনড URL,
- * এনকোডেড পাথ, বা স্পেস/বাংলা অক্ষরসহ raw পাথ) — এই ফাংশন সবসময়
- * Supabase Storage-এর জন্য valid, decoded relative path রিটার্ন করবে।
- */
 function extractStoragePath(rawPath: string | null | undefined, bucketName: string): string | null {
   if (!rawPath) return null
   let path = rawPath.trim()
 
-  // 1️⃣ যদি এটা একটা ফুল URL হয় (public বা signed), শুধু বাকেটের পরের অংশটুকু বের করো
+  // 1️⃣ যদি এটা একটা ফুল URL হয়, তবে বাকেটের পরের অংশ নিখুঁতভাবে কেটে নাও
   if (/^https?:\/\//i.test(path)) {
     try {
       const url = new URL(path)
@@ -26,14 +20,29 @@ function extractStoragePath(rawPath: string | null | undefined, bucketName: stri
       if (idx !== -1) {
         path = url.pathname.slice(idx + marker.length)
       } else {
-        // fallback: bucket নাম না মিললেও চেষ্টা করো শেষ সেগমেন্ট নিতে
         const parts = url.pathname.split(`${bucketName}/`)
         path = parts.length > 1 ? parts[parts.length - 1] : url.pathname
       }
     } catch {
-      // ভ্যালিড URL না হলে raw string হিসেবেই এগিয়ে যাও
+      // ওল্ড স্কুল ফলব্যাক
     }
   }
+
+  // 2️⃣ ইউআরএল ডিকোড করার পর সামনে-পেছনে হিডেন স্পেস বা %20 ফাঁকা জায়গা ক্লিন করা
+  if (/%[0-9A-Fa-f]{2}/.test(path)) {
+    try {
+      path = decodeURIComponent(path)
+    } catch {
+      // ইগনোর
+    }
+  }
+
+  // 💥 মেইন ফিক্স: ডিকোড করা ফাইলের নামের একদম শুরুতে বা শেষে কোনো স্পেস বা স্ল্যাশ থাকলে তা পুরোপুরি মুছে দাও
+  path = path.replace(/^[\s/]+|[\s/]+$/g, '')
+
+  return path || null
+}
+
 
   // 2️⃣ যদি path টা percent-encoded থাকে (%E0%A6%... ইত্যাদি), decode করো।
   //    ইতিমধ্যে raw স্পেস/বাংলা অক্ষর থাকলে (encode করা না থাকলে) স্কিপ করে দাও,
