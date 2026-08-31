@@ -192,14 +192,19 @@ export default function AdminDashboardPage() {
       alert('ফাইল নাম খুঁজে পাওয়া যায়নি!');
       return;
     }
-    // 🔐 সুপাবেস স্টোরেজ থেকে সরাসরি সিকিউর ডাউনলোড লিংক তৈরি
+    
+    // 🔠 ফাইলের নামের স্পেস ও বাংলা অক্ষর নিখুঁতভাবে ফিক্স করার জন্য
+    const cleanedPath = decodeURIComponent(order.suggestions.pdf_url).trim();
+    
+    // 🔐 সুপাবেস স্টোরেজ থেকে সিকিউর ডাউনলোড লিংক তৈরি
     const { data, error } = await supabase.storage
       .from('suggestions-pdf')
-      .createSignedUrl(order.suggestions.pdf_url, 60);
+      .createSignedUrl(cleanedPath, 60);
     
     if (data?.signedUrl) {
       window.open(data.signedUrl, '_blank');
     } else {
+      console.error('Supabase Storage Error:', error);
       alert('ফাইল ডাউনলোড লিংক তৈরি করা যায়নি! স্টোরেজে ফাইলটি আছে কি না চেক করুন।');
     }
   }}
@@ -207,6 +212,7 @@ export default function AdminDashboardPage() {
 >
   Download Link
 </button>
+
 
                           ) : (
                             <span className="text-xs text-neutral-600">—</span>
