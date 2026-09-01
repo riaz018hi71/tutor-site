@@ -139,10 +139,15 @@ export default function MyOrderPage() {
       return
     }
 
-    await supabase
+    const { error: updateError } = await supabase
       .from('orders')
       .update({ has_downloaded: true, status: 'Used' })
       .eq('id', order.id)
+
+    if (updateError) {
+      console.error('❌ Order status update failed:', updateError, '| order.id used:', order.id)
+      alert('ফাইল ডাউনলোড হয়েছে, কিন্তু অর্ডারের স্ট্যাটাস আপডেট করা যায়নি। অ্যাডমিনের সাথে যোগাযোগ করুন। (Console-এ error দেখুন)')
+    }
 
     window.open(data.signedUrl, '_blank')
 
