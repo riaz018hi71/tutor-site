@@ -34,6 +34,7 @@ export default async function HomePage() {
           <div className="hidden gap-8 text-sm font-medium text-neutral-300 md:flex">
             <Link href="/" className="transition-colors hover:text-white">Home</Link>
             <a href="#browse" className="transition-colors hover:text-white">See ALL</a>
+            <Link href="/my-order" className="transition-colors hover:text-white">🔍 আমার অর্ডার</Link>
             <Link href="/admin/dashboard" className="transition-colors hover:text-white">Admin</Link>
           </div>
         </div>
