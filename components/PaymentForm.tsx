@@ -340,10 +340,20 @@ export default function PaymentForm({ suggestionId, price }: { suggestionId: str
   // Scenario C: Used / No Order — ডিফল্ট পেমেন্ট ফর্ম
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-8">
-      <h2 className="text-xl font-bold text-white">Complete Your Payment</h2>
-      <p className="mt-1 text-sm text-neutral-400">
-        Send ৳{price} using one of the methods below, then submit your Transaction ID.
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-white">Complete Your Payment</h2>
+          <p className="mt-1 text-sm text-neutral-400">
+            Send ৳{price} using one of the methods below, then submit your Transaction ID.
+          </p>
+        </div>
+        <Link
+          href="/"
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-neutral-700 hover:border-neutral-500"
+        >
+          🏠 হোমপেজে যান
+        </Link>
+      </div>
 
       <div className="mt-6 grid grid-cols-3 gap-3">
         {(['bKash', 'Nagad', 'Bank'] as const).map((m) => (
