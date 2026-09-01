@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import Link from 'next/link'
 
 const PDF_BUCKET = 'suggestions-pdf'
 
@@ -287,14 +288,22 @@ export default function PaymentForm({ suggestionId, price }: { suggestionId: str
         <p className="mt-2 text-sm text-amber-200">
           আপনার পেমেন্টটি যাচাই করা হচ্ছে। অ্যাডমিন অ্যাপ্রুভ করার পর এখান থেকেই ডাউনলোড করতে পারবেন।
         </p>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="mt-6 rounded-lg border border-amber-700 bg-amber-500/10 px-5 py-2.5 text-sm font-semibold text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-60"
-        >
-          {refreshing ? 'চেক করা হচ্ছে...' : '🔄 স্ট্যাটাস রিফ্রেশ করুন'}
-        </button>
+        <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="rounded-lg border border-amber-700 bg-amber-500/10 px-5 py-2.5 text-sm font-semibold text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-60"
+          >
+            {refreshing ? 'চেক করা হচ্ছে...' : '🔄 স্ট্যাটাস রিফ্রেশ করুন'}
+          </button>
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-neutral-800 hover:border-neutral-500"
+          >
+            🏠 হোমপেজে যান
+          </Link>
+        </div>
       </div>
     )
   }
@@ -318,6 +327,12 @@ export default function PaymentForm({ suggestionId, price }: { suggestionId: str
         <p className="mt-3 text-xs text-neutral-500">
           লিংকটি ৫ মিনিটের জন্য বৈধ থাকবে এবং একবারই ব্যবহার করা যাবে।
         </p>
+        <Link
+          href="/"
+          className="mt-4 inline-flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-neutral-800 hover:border-neutral-500"
+        >
+          🏠 হোমপেজে যান
+        </Link>
       </div>
     )
   }
